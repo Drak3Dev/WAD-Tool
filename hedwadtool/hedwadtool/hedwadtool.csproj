@@ -63,6 +63,7 @@
   <ItemGroup>
     <Compile Include="BruteHelper.cs" />
     <Compile Include="LegacyThps\Checksum.cs" />
+    <Compile Include="LegacyThps\Compat.cs" />
     <Compile Include="MainForm.cs">
       <SubType>Form</SubType>
     </Compile>

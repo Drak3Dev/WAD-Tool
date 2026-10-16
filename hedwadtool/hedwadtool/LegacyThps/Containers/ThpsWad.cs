@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using System.IO;
 
@@ -119,13 +118,14 @@ namespace LegacyThps.Containers
                 throw new Exception($"Not found: {filename}");
 
             string[] lines = File.ReadAllLines(filename);
-            string path = Path.ChangeExtension(filename, "");
+            // ChangeExtension(f, "") gives "name." - Windows strips the trailing dot, Linux doesn't (always fixed)
+            string path = Path.ChangeExtension(filename, null);
 
             ThpsWad wad = new ThpsWad();
 
             foreach (string s in lines)
             {
-                if (s != "")
+                if (Compat.NoFix ? s != "" : s.Trim() != "")
                 {
                     ThpsWadEntry en = new ThpsWadEntry(Path.Combine(path, s.Trim()));
                     wad.Entries.Add(en);
@@ -143,6 +143,9 @@ namespace LegacyThps.Containers
                 throw new Exception($"Not found: {path}");
 
             string[] lines = Directory.GetFiles(path);
+
+            // NTFS lists files alphabetically, Linux filesystems don't (always fixed)
+            Array.Sort(lines, StringComparer.OrdinalIgnoreCase);
 
             ThpsWad wad = new ThpsWad();
 
@@ -173,19 +176,111 @@ namespace LegacyThps.Containers
 
         public void Read(BinaryReader hed, BinaryReader wad)
         {
+            // original reads hashed HED only
+            if (!Compat.NoFix && TryReadRaw(hed, wad))
+            {
+                archiveType = ArchiveType.WadRaw;
+                return;
+            }
+
+            archiveType = ArchiveType.WadHashed;
+            hed.BaseStream.Position = 0;
+
             if (hed.BaseStream.Length % 12 != 0)
                 if ((hed.BaseStream.Length - 4) % 12 != 0)
                     throw new Exception("not a THPS2 WAD");
 
-            do
+            if (Compat.NoFix)
+            {
+                do
+                {
+                    ThpsWadEntry en = new ThpsWadEntry(hed);
+                    wad.BaseStream.Position = en.offset;
+                    en.Data = wad.ReadBytes(en.size);
+
+                    Entries.Add(en);
+                }
+                while (hed.BaseStream.Length - hed.BaseStream.Position >= 12 );
+
+                return;
+            }
+
+            while (hed.BaseStream.Length - hed.BaseStream.Position >= 4)
             {
                 ThpsWadEntry en = new ThpsWadEntry(hed);
+
+                if (en.checksum == 0)
+                    break; // terminator
+
                 wad.BaseStream.Position = en.offset;
                 en.Data = wad.ReadBytes(en.size);
 
+                if (en.Data.Length != en.size)
+                    Console.Error.WriteLine($"warning: {en.name} is truncated ({en.Data.Length} of {en.size} bytes), WAD too short");
+
                 Entries.Add(en);
             }
-            while (hed.BaseStream.Length - hed.BaseStream.Position >= 12 );
+        }
+
+        static bool IsValidNameChar(byte b)
+        {
+            return b > 0x20 && b < 0x7F && "/\\:*?\"<>|".IndexOf((char)b) < 0;
+        }
+
+        /// <summary>
+        /// Reads THPS1-style HED: { name, null padded to 4 bytes, int offset, int size } ... 0xFF.
+        /// Validates the whole HED first, so a hashed HED is never mistaken for raw. Leaves Entries empty on failure.
+        /// </summary>
+        bool TryReadRaw(BinaryReader hed, BinaryReader wad)
+        {
+            hed.BaseStream.Position = 0;
+            byte[] buf = hed.ReadBytes((int)hed.BaseStream.Length);
+            long wadLength = wad.BaseStream.Length;
+
+            var found = new List<ThpsWadEntry>();
+            int pos = 0;
+
+            while (true)
+            {
+                if (pos == buf.Length - 1 && buf[pos] == 0xFF) break; // terminator
+                if (pos == buf.Length && found.Count > 0) break; // no terminator, still fine
+                if (pos >= buf.Length) return false;
+
+                int start = pos;
+                while (pos < buf.Length && buf[pos] != 0)
+                {
+                    if (!IsValidNameChar(buf[pos]) || pos - start > 255) return false;
+                    pos++;
+                }
+
+                int len = pos - start;
+                int next = start + len + (4 - len % 4);
+
+                if (len == 0 || next + 8 > buf.Length) return false;
+
+                for (int i = start + len; i < next; i++)
+                    if (buf[i] != 0) return false;
+
+                int offset = BitConverter.ToInt32(buf, next);
+                int size = BitConverter.ToInt32(buf, next + 4);
+
+                if (offset < 0 || size < 0 || offset > wadLength) return false;
+
+                found.Add(new ThpsWadEntry(Encoding.ASCII.GetString(buf, start, len), offset, size));
+                pos = next + 8;
+            }
+
+            foreach (ThpsWadEntry en in found)
+            {
+                wad.BaseStream.Position = en.offset;
+                en.Data = wad.ReadBytes(en.size);
+
+                if (en.Data.Length != en.size)
+                    Console.Error.WriteLine($"warning: {en.name} is truncated ({en.Data.Length} of {en.size} bytes), WAD too short");
+            }
+
+            Entries.AddRange(found);
+            return true;
         }
 
         public void Extract(string path)
@@ -242,8 +337,11 @@ namespace LegacyThps.Containers
                         wad.Write(w.Data);
                     }
 
-                    wad.BaseStream.Position = WadSize - 1;
-                    wad.Write((byte)0);
+                    if (Compat.NoFix || WadSize > 0)
+                    {
+                        wad.BaseStream.Position = WadSize - 1;
+                        wad.Write((byte)0);
+                    }
                 }
             }
             else
@@ -253,248 +351,16 @@ namespace LegacyThps.Containers
         }
 
 
-        bool isPRE = false;
-
-        public string WADname = "CD";
-
-        public List<ThpsWadEntry> files = new List<ThpsWadEntry>();
-
-        //MemoryStream ms;
-        //BinaryReader br;
-
         public ThpsWad()
         {
             Reset();
         }
 
-        public void LoadFromLayout(string f)
-        {
-            string[] lol = File.ReadAllLines(f);
-
-            string rootpath = Path.GetDirectoryName(f);
-            string wadfold = Path.GetFileNameWithoutExtension(f).Replace("__layout", "");
-            WADname = wadfold;
-
-            for (int i = 0; i < lol.Count(); i++)
-            {       
-                string path = rootpath + "\\" + wadfold + "\\" + lol[i];
-
-                if (File.Exists(path))
-                {
-                    byte[] data = File.ReadAllBytes(path);
-
-                    ThpsWadEntry ff = new ThpsWadEntry(lol[i], 0, data.Length);
-
-                    ff.Data = data;
-
-                    if (lol[i][0] == '_' && lol[i][lol[i].Length - 1] == '_')
-                    {
-                        string nname = lol[i].Trim('_');
-                        uint hex = 0;
-
-                        Checksum.TryParseHex(nname, out hex);
-
-                        ff.checksum = hex;
-                    }
-                    else
-                    {
-                        ff.checksum = Checksum.CalcLegacy(lol[i], false);
-                    }
-
-                    files.Add(ff);
-                }
-            }
-        }
-
         public void Reset()
         {
             checksums.Clear();
-            files.Clear();
 
             InitDictionary();
         }
-        
-        /*
-        public ThpsWad(string fn)
-        {
-            WADname = Path.GetFileNameWithoutExtension(fn);
-
-            Reset();
-
-            ms = new MemoryStream(File.ReadAllBytes(fn));
-            br = new BinaryReader(ms);
-
-            if (testTH1formatFast())
-            {
-                ParseTH1HED();
-            }
-            else
-            {
-                ParseTH2HED();
-            }
-        }
-        */
-
-        ~ThpsWad()
-        {
-            //if (br!=null) br.Close();
-            //if (ms != null) ms.Close();
-            //br = null;
-            //ms = null;
-        }
-
-        /*
-        private bool testTH1formatFast()
-        {
-            br.BaseStream.Position = 0;
-            byte[] test = br.ReadBytes(4);
-
-            foreach (byte b in test) 
-                if (!isValidChar(b)) 
-                    return false;
-
-            return true;
-        }
-        */
-
-        private bool isValidChar(byte x)
-        {
-            if (x >= 0x2E & (char)x < 'z') return true;
-            return false;
-        }
-
-        /*
-        private void ParseTH1HED()
-        {
-            br.BaseStream.Position = 0;
-
-            do files.Add(new ThpsWadEntry(ReadNTString(br), br.ReadInt32(), br.ReadInt32()));
-            while (br.BaseStream.Position < br.BaseStream.Length - 1);
-        }
-        */
-        /*
-        private void ParseTH2HED()
-        {
-            br.BaseStream.Position = 0;
-
-            do files.Add(new ThpsWadEntry(br.ReadUInt32(), br.ReadInt32(), br.ReadInt32()));
-            while (br.BaseStream.Position < br.BaseStream.Length - 4);
-        }
-        */
-
-        /*
-        public void ParsePre(string fn)
-        {
-            ms = new MemoryStream(File.ReadAllBytes(fn));
-            br = new BinaryReader(ms);
-
-            br.BaseStream.Position = 0;
-            int fileCount = br.ReadInt32();
-
-            for (int i = 0; i < fileCount; i++)
-            {
-                ThpsWadEntry f = new ThpsWadEntry(0, 0, 0);
-                f.name = ReadNTString(br);
-                f.size = br.ReadInt32();
-                f.Data = br.ReadBytes(f.size);
-
-                if (f.size % 4 > 0) br.BaseStream.Position += 4 - f.size % 4;
-
-                files.Add(f);
-            }
-
-            Directory.CreateDirectory(".\\" + Path.GetFileNameWithoutExtension(fn) + "\\");
-
-            foreach (ThpsWadEntry h in files)
-            {
-                File.WriteAllBytes(".\\" + Path.GetFileNameWithoutExtension(fn) + "\\" + h.name, h.Data);
-            }
-
-            isPRE = true;
-        }
-
-        */
-
-        private string ReadNTString(BinaryReader br)
-        {
-            List<byte> x = new List<byte>();
-
-            do x.AddRange(br.ReadBytes(4).ToList());
-            while (!x.Contains(0));
-
-            x.RemoveAll(item => item.Equals(0));
-
-            return System.Text.Encoding.ASCII.GetString(x.ToArray());
-        }
-
-        public void ExtractWAD(string s)
-        {
-            MemoryStream ms = new MemoryStream(File.ReadAllBytes(s));
-            BinaryReader br = new BinaryReader(ms);
-
-            string rootpath = Path.GetDirectoryName(s) + "\\";
-            string wadpath = rootpath + WADname + "\\";
-            string layout = rootpath + WADname+"__layout.txt";
-
-            if (!Directory.Exists(wadpath)) Directory.CreateDirectory(wadpath);
-
-            if (File.Exists(layout)) File.Delete(layout);
-            
-            StringBuilder sb = new StringBuilder();
-
-            foreach (ThpsWadEntry h in files)
-            {
-                br.BaseStream.Position = h.offset;
-                byte[] x = br.ReadBytes(h.size);
-                File.WriteAllBytes(wadpath + h.name, x);
-
-                sb.Append(h.name + "\r\n");               
-            }
-
-            File.AppendAllText(layout, sb.ToString());
-        }
-
-
-
-        public void BuildWAD(string fn)
-        {
-            string hedfile = fn.ToLower().Replace("__layout.txt", ".hed");
-            string hed1file = fn.ToLower().Replace("__layout.txt", ".hed1");
-            string wadfile = fn.ToLower().Replace("__layout.txt", ".wad");
-
-            BinaryWriter wad = new BinaryWriter(File.Open(wadfile, FileMode.Create));
-            BinaryWriter hed = new BinaryWriter(File.Open(hedfile, FileMode.Create));
-            BinaryWriter hed1 = new BinaryWriter(File.Open(hed1file, FileMode.Create));
-
-            foreach (ThpsWadEntry h in files)
-            {
-                h.offset = (int)wad.BaseStream.Position;
-                
-                wad.Write(h.Data);
-
-                int diff = h.size % 2048;
-                wad.Write(new byte[(diff == 0) ? 2048 : 2048 - diff]);
-
-                hed.Write(h.checksum);
-                hed.Write(h.offset);
-                hed.Write(h.size);
-
-
-                hed1.Write(h.name.ToCharArray());
-
-                int diff2 = h.name.Length % 4;
-                hed1.Write(new byte[(diff == 0) ? 4 : 4 - diff2]);
-
-                hed1.Write(h.offset);
-                hed1.Write(h.size);
-            }
-
-            hed1.Write((byte)0xFF);
-
-            wad.Close();
-            hed.Close();
-            hed1.Close();
-        }
-
     }
 }

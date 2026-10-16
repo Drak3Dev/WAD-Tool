@@ -41,7 +41,7 @@ namespace LegacyThps.Containers
         public ThpsWadEntry(string filename)
         {
             name = Path.GetFileName(filename);
-            checksum = Checksum.CalcLegacy(name, false);
+            checksum = NameToChecksum(name);
             Data = File.ReadAllBytes(filename);
             size = Data.Length;
             offset = 0;
@@ -53,6 +53,18 @@ namespace LegacyThps.Containers
             size = s;
             offset = off;
             checksum = Checksum.CalcLegacy(name, false);
+        }
+
+        /// <summary>
+        /// Checksum for a file name. Unknown names are extracted as _XXXXXXXX_, so they map back to that checksum.
+        /// </summary>
+        public static uint NameToChecksum(string name)
+        {
+            if (!Compat.NoFix && name.Length == 10 && name[0] == '_' && name[9] == '_')
+                if (uint.TryParse(name.Substring(1, 8), System.Globalization.NumberStyles.HexNumber, null, out uint hex))
+                    return hex;
+
+            return Checksum.CalcLegacy(name, false); // original: always hash the name itself
         }
 
         public void Save(string path)
@@ -73,18 +85,14 @@ namespace LegacyThps.Containers
 
             int diff = size % 2048;
             int diff2 = name.Length % 4;
-            bw.Write(new byte[(diff == 0) ? 4 : 4 - diff2]);
+
+            if (Compat.NoFix)
+                bw.Write(new byte[(diff == 0) ? 4 : 4 - diff2]); // original behaviour
+            else
+                bw.Write(new byte[4 - diff2]); // name + at least one null, aligned to 4
 
             bw.Write(offset);
             bw.Write(size);
-        }
-
-        public ThpsWadEntry(uint c, int off, int s)
-        {
-            checksum = c;
-            size = s;
-            offset = off;
-            name = ThpsWad.GetName(checksum);
         }
 
         public override string ToString()

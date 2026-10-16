@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>wadtool</AssemblyName>
+    <RootNamespace>hedwadtool</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <StripSymbols>true</StripSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- original core sources, unchanged -->
+    <Compile Include="../hedwadtool/hedwadtool/LegacyThps/**/*.cs" LinkBase="LegacyThps" />
+    <Compile Include="../hedwadtool/hedwadtool/BruteHelper.cs" Link="BruteHelper.cs" />
+    <None Include="../hedwadtool/hedwadtool/filenames.txt" Link="filenames.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

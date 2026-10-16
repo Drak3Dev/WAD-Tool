@@ -43,7 +43,7 @@ namespace LegacyThps
                 result = Convert.ToUInt32(hex, 16);
                 return true;
             }
-            catch (Exception exception)
+            catch
             {
                 return false;
             }

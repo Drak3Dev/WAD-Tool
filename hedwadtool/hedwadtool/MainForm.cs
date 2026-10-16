@@ -53,8 +53,6 @@ namespace hedwadtool
         }
 
 
-        ThpsWad hed;
-
         private void button2_Click(object sender, EventArgs e)
         {
             stop = true;
@@ -138,61 +136,6 @@ namespace hedwadtool
                         break;
                 }
             }
-
-            //MessageBox.Show("wow");
-
-            /*
-            if (filename.ToLower().Contains(".hed"))
-            {
-                hed = new ThpsWad(filename);
-
-                StringBuilder sb = new StringBuilder();
-
-                foreach (ThpsWadEntry ss in hed.files)
-                {
-                    // if (ss.name[0] == '_')
-                    sb.Append(ss.ToString() + "\r\n");
-                }
-
-                checksumBox.Text = sb.ToString();
-
-                hed.ExtractWAD(Path.ChangeExtension(filename, ".wad"));
-
-                MessageBox.Show("I'm here");
-            }
-            else
-            {
-                if (filename.ToLower().Contains("__layout"))
-                {
-                    hed = new ThpsWad();
-                    hed.LoadFromLayout(filename);
-
-                    hed.BuildWAD(filename);
-                }
-                else
-                {
-                    if (filename.ToLower().Contains(".pre"))
-                    {
-                        hed = new ThpsWad();
-                        hed.ParsePre(filename);
-
-                        StringBuilder sb = new StringBuilder();
-                        foreach (ThpsWadEntry ss in hed.files)
-                        {
-                            // if (ss.name[0] == '_')
-                            sb.Append(ss.ToString() + "\r\n");
-                        }
-
-                        checksumBox.Text = sb.ToString();
-                    }
-                    else
-                    {
-                        checksumBox.Text = Path.GetFileName(filename) + " doesn't look like WAD, PRE, or layout file.";
-                    }
-                }
-            }
-
-            */
         }
 
         private void Form1_Load(object sender, EventArgs e)

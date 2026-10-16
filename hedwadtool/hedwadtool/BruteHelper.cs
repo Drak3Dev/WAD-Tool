@@ -31,6 +31,10 @@ namespace hedwadtool
             {
                 checksumuint = 0;
             }
+
+            // original tests "" first instead of prefix + suffix
+            if (!Compat.NoFix)
+                sb.Append(prefix).Append(suffix);
         }
 
 
@@ -38,7 +42,6 @@ namespace hedwadtool
         int len1;
 
         List<byte> target = new List<byte>();
-        bool stop = false;
 
         StringBuilder sb = new StringBuilder();
 
@@ -51,7 +54,8 @@ namespace hedwadtool
 
         public bool ChecksumMatches()
         {
-            if (checksumuint == Checksum.CalcLegacy(sb.ToString(), true)) //true because we already brute lowercase
+            // original: true because we already brute lowercase - but prefix/suffix may have caps, and names are hashed lowercased
+            if (checksumuint == Checksum.CalcLegacy(sb.ToString(), Compat.NoFix))
                 return true;
 
             return false;
